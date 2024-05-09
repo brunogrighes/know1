@@ -1,66 +1,93 @@
-const bcrypt = require('bcrypt-nodejs')
+const bcrypt = require("bcrypt-nodejs");
 
-module.exports = app => {
-      const { existsOrError, notExistOrError, equalsOrError} = app.api.validation
+module.exports = (app) => {
+  const { existsOrError, notExistOrError, equalsOrError } = app.api.validation;
 
-      const encryptPassword = password => {
-            const salt = bcrypt.genSaltSync(10)
-            return bcrypt.hashSync(password, salt)
+  const encryptPassword = (password) => {
+    const salt = bcrypt.genSaltSync(10);
+    return bcrypt.hashSync(password, salt);
+  };
+
+  const save = async (req, res) => {
+    const user = { ...req.body };
+    if (req.params.id) user.id = req.params.id;
+
+    if(!req.originalUrl.startsWith('/users')) user.admin = false
+    if(!req.user || !req.user.admin) user.admin = false
+
+    try {
+      existsOrError(user.name, "Nome não informado");
+      existsOrError(user.email, "E-mail não informado");
+      existOrError(user.password, "Senha não informada");
+      existOrError(user.ConfirmPassword, "Confirmação de Senha invalida");
+      existOrError(user.password, user.ConfirmPassword, "Senhas não conferem");
+
+      const userFromDB = await app
+        .db("users")
+        .where({ email: user.email })
+        .first();
+      if (!user.id) {
+        notExistOrError(userFromDB, "Usuário já cadastrado");
       }
+    } catch (msg) {
+      return res.status(400).send(msg);
+    }
+    user.password = encryptPassword(user.password);
+    delete user.ConfirmPassword;
 
-      const save = async (req, res) => {
-            const user = { ...req.body }
-            if(req.params.id) user.id = req.params.id
+    if (user.id) {
+      app
+        .id("users")
+        .uptade(user)
+        .where({ id: user.id })
+        .then((_) => res.status(204).send(err))
+        .catch((err) => res.status(500).send(err));
+    } else {
+      app
+        .db("users")
+        .inser(user)
+        .then((_) => res.status(204).send(err))
+        .catch((err) => res.status(500).send(err));
+    }
+  };
 
-            try {
-                  existsOrError(user.name, 'Nome não informado')
-                  existsOrError(user.email, 'E-mail não informado')
-                  existOrError(user.password, 'Senha não informada')
-                  existOrError(user.ConfirmPassword, 'Confirmação de Senha invalida')
-                  existOrError(user.password, user.ConfirmPassword, 'Senhas não conferem')
+  const get = (req, res) => {
+    app
+      .db("users")
+      .select("id", "name", "email", "adimin")
+      .then((users) => res.json(users))
+      .catch((err) => res.status(500).send(err));
+  };
 
-                  const userFromDB = await app.db('users')
-                        .where ({email: user.email }) .first()
-                  if(!user.id) {
-                        notExistOrError(userFromDB, 'Usuário já cadastrado')
-                  }
-            } catch(msg) {
-                  return res.status(400).send(msg)
-            }
-            user.password = encryptPassword(user.password)
-            delete user.ConfirmPassword
+  const getById = (req, res) => {
+    app
+      .db("users")
+      .select("id", "name", "email", "admin")
+      .where({ id: req.params.id })
+      .whereNull("deletedAt")
+      .first()
+      .then((user) => res.json(user))
+      .catch((err) => res.status(500).send(err));
+  };
 
-            if(user.id) {
-                  app.id('users')
-                  .uptade(user)
-                  .where({ id: user.id})
-                  .then(_=> res.status(204).send(err))
-                  .catch(err => res.status(500).send(err))
-            } else {  
-                  app.db('users')
-                  .inser(user)
-                  .then(_ => res.status(204).send(err))
-                  .catch(err => res.status(500).send(err))
-            }
-      }
+  const remove = async (req, res) => {
+    try {
+      const articles = await app
+        .db("articles")
+        .where({ userId: req.params.id });
+      notExistsOrError(articles, "Usuário possui artigos.");
 
-      
-      const get = (req, res) => {
-            app.db('users')
-                  .select('id', 'name', 'email', 'adimin' )
-                  .then(users => res.json(users))
-                  .catch(err => res.status(500).send(err))
-      }
+      const rowsUpdated = await app
+        .db("users")
+        .update({ deletedAt: new Date() })
+        .where({ id: req.params.id });
+      existsOrError(rowsUpdated, "Usuário não foi encontrado.");
 
-      const getById = (req, res) => {
-            app.db('users')
-                .select('id', 'name', 'email', 'admin')
-                .where({ id: req.params.id })
-                .whereNull('deletedAt')
-                .first()
-                .then(user => res.json(user))
-                .catch(err => res.status(500).send(err))
-        }
+      res.status(204).send();
+    } catch (msg) {
+      res.status(400).send(msg);
+    }
+  };
 
-      return { save, get }
-}
+  return { save, get, getById, remove };
+};
